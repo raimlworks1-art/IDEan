@@ -1,3 +1,5 @@
+import { Capacitor, registerPlugin } from '@capacitor/core';
+
 // Folder import ("From disk") using the File System Access API when available,
 // with a <input webkitdirectory> fallback for browsers that lack it.
 
@@ -6,10 +8,12 @@ export interface DiskFile {
   content: string;
 }
 
+export type DiskHandle = FileSystemDirectoryHandle | { native_tree: string };
+
 export interface DiskFolder {
   name: string;
   files: DiskFile[];
-  handle?: FileSystemDirectoryHandle;
+  handle?: DiskHandle;
   skipped: number;
 }
 
@@ -19,10 +23,52 @@ const MAX_FILE_BYTES = 1024 * 1024; // 1 MB
 const MAX_FILES = 500;
 
 // Handles survive only for the current session (they can't live in localStorage)
-const handles = new Map<string, FileSystemDirectoryHandle>();
-export const registerDiskHandle = (projectId: string, h: FileSystemDirectoryHandle) =>
+const handles = new Map<string, DiskHandle>();
+const TREES_KEY = 'sbox_disk_trees';
+
+interface NativeFolder {
+  name: string;
+  tree_uri: string;
+  files: DiskFile[];
+  skipped: number;
+}
+
+interface DiskAccessApi {
+  pick_folder(): Promise<NativeFolder>;
+  write_file(opts: { tree_uri: string; path: string; content: string }): Promise<void>;
+}
+
+const DiskAccess = registerPlugin<DiskAccessApi>('DiskAccess');
+
+function load_trees(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(TREES_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+export const registerDiskHandle = (projectId: string, h: DiskHandle) => {
   handles.set(projectId, h);
-export const hasDiskHandle = (projectId: string) => handles.has(projectId);
+  if ('native_tree' in h) {
+    const trees = load_trees();
+    trees[projectId] = h.native_tree;
+    try {
+      localStorage.setItem(TREES_KEY, JSON.stringify(trees));
+    } catch {
+      return;
+    }
+  }
+};
+
+function get_handle(projectId: string): DiskHandle | undefined {
+  const known = handles.get(projectId);
+  if (known) return known;
+  const uri = load_trees()[projectId];
+  return uri ? { native_tree: uri } : undefined;
+}
+
+export const hasDiskHandle = (projectId: string) => get_handle(projectId) !== undefined;
 
 function looksBinary(text: string): boolean {
   return text.slice(0, 4000).includes('\u0000');
@@ -119,6 +165,15 @@ function pickWithInput(): Promise<DiskFolder | null> {
 }
 
 export async function pickFolderFromDisk(): Promise<DiskFolder | null> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await DiskAccess.pick_folder();
+      return { name: res.name, files: res.files, handle: { native_tree: res.tree_uri }, skipped: res.skipped };
+    } catch (err) {
+      if ((err as { message?: string })?.message === 'cancelled') return null;
+      throw err;
+    }
+  }
   const w = window as unknown as {
     showDirectoryPicker?: (opts?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
   };
@@ -142,8 +197,16 @@ export async function writeBackToDisk(
   path: string,
   content: string
 ): Promise<boolean> {
-  const root = handles.get(projectId);
+  const root = get_handle(projectId);
   if (!root) return false;
+  if ('native_tree' in root) {
+    try {
+      await DiskAccess.write_file({ tree_uri: root.native_tree, path, content });
+      return true;
+    } catch {
+      return false;
+    }
+  }
   try {
     const parts = path.split('/');
     let dir = root;

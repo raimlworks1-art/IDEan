@@ -78,7 +78,8 @@ interface FoldedEntry {
 
 const LINE_HEIGHT = 22;
 const EDITOR_PADDING_TOP = 16;
-const EDITOR_PADDING_LEFT = 20;
+const EDITOR_PADDING_LEFT = 8;
+const GUTTER_WIDTH = 44;
 const APPROX_CHAR_WIDTH = 8.1;
 
 export const CodeEditor: React.FC<CodeEditorProps> = ({
@@ -132,6 +133,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 
   // Custom Context Menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [scroll_area_height, set_scroll_area_height] = useState(0);
 
   const code = activeFile.content;
   const language = activeFile.language;
@@ -270,7 +272,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       }
 
       // Horizontal scroll tracking
-      const gutterWidth = 52;
+      const gutterWidth = GUTTER_WIDTH;
       const cursorLeft = EDITOR_PADDING_LEFT + colIdx * APPROX_CHAR_WIDTH;
       const visibleCodeWidth = Math.max(120, scrollEl.clientWidth - gutterWidth);
       const currentScrollLeft = scrollEl.scrollLeft;
@@ -790,8 +792,18 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     return max;
   }, [lines]);
 
-  const contentHeightPx = Math.max(320, lines.length * LINE_HEIGHT + EDITOR_PADDING_TOP * 2 + 160);
+  const contentHeightPx = Math.max(320, lines.length * LINE_HEIGHT + EDITOR_PADDING_TOP * 2 + 160, scroll_area_height);
   const contentWidthPx = Math.max(300, maxLineChars * APPROX_CHAR_WIDTH + EDITOR_PADDING_LEFT * 2 + 64);
+
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const measure = () => set_scroll_area_height(el.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // Close context menu on click anywhere
   useEffect(() => {
@@ -1000,11 +1012,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           {/* LEFT: Synchronized Line Numbers Gutter (Sticky horizontally, scrolls vertically in lockstep) */}
           <div
             aria-hidden="true"
-            style={{
-              paddingTop: `${EDITOR_PADDING_TOP}px`,
-              paddingBottom: `${EDITOR_PADDING_TOP}px`,
-            }}
-            className="sticky left-0 z-10 w-[54px] min-w-[54px] bg-[#161617] border-r border-[#2F2F30] select-none shrink-0"
+            style={{ width: `${GUTTER_WIDTH}px`, minWidth: `${GUTTER_WIDTH}px`, paddingTop: `${EDITOR_PADDING_TOP}px`, paddingBottom: `${EDITOR_PADDING_TOP}px` }}
+            className="sticky left-0 z-10 bg-[#161617] border-r border-[#2F2F30] select-none shrink-0"
           >
             {lines.map((_, idx) => {
               const lineNumberInfo = displayLineNumbers[idx];
@@ -1016,14 +1025,14 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
                 <div
                   key={idx}
                   style={{ height: `${LINE_HEIGHT}px`, lineHeight: `${LINE_HEIGHT}px` }}
-                  className={`pr-2 pl-1.5 flex items-center justify-between font-mono-code text-[12px] transition-colors ${
+                  className={`pr-1.5 pl-1 flex items-center justify-between font-mono-code text-[12px] transition-colors ${
                     isCurrentLine
                       ? 'bg-[#242425] text-[#E6E6E8] font-medium border-l-2 border-l-[#B4B4B8]'
                       : 'text-[#707073]'
                   }`}
                 >
                   {/* Code Folding Toggle Button */}
-                  <div className="w-3.5 h-full flex items-center justify-center">
+                  <div className="w-3 h-full flex items-center justify-center">
                     {foldedHere ? (
                       <button
                         type="button"

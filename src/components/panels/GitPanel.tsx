@@ -320,7 +320,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({
   };
 
   return (
-    <aside className="w-80 max-w-[88vw] h-full bg-[#222223] border-r border-[#2F2F30] flex flex-col select-none shrink-0 z-30">
+    <aside className="w-full h-full min-h-0 bg-[#222223] border-b border-[#2F2F30] flex flex-col select-none shrink-0 z-30">
       {/* Header */}
       <div className="h-9 px-3 border-b border-[#2F2F30] flex items-center justify-between">
         <div className="flex items-center gap-2">

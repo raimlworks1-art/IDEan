@@ -16,7 +16,7 @@ import { ProjectsPanel } from './components/panels/ProjectsPanel';
 import { PluginsPanel } from './components/panels/PluginsPanel';
 import { GitPanel } from './components/panels/GitPanel';
 import { validateLuaSyntax } from './utils/luaTokenizer';
-import { DiskFile, registerDiskHandle, hasDiskHandle, writeBackToDisk } from './utils/diskImport';
+import { DiskFile, DiskHandle, registerDiskHandle, hasDiskHandle, writeBackToDisk } from './utils/diskImport';
 import {
   validateToken,
   createRepo,
@@ -766,7 +766,7 @@ export function App() {
     (
       folderName: string,
       files: DiskFile[],
-      handle: FileSystemDirectoryHandle | undefined,
+      handle: DiskHandle | undefined,
       skipped: number
     ) => {
       const now = Date.now();
@@ -1181,16 +1181,11 @@ export function App() {
       <div className="h-px w-full bg-[#2F2F30] shrink-0" />
 
       {/* 5. MAIN WORKSPACE: Optional Side Panel + Main Code Editor (Line Numbers | Code Editor) */}
-      <div className="flex-1 flex min-h-0 min-w-0 relative overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 relative overflow-hidden">
         {/* Side Panels (Projects, Plugins, Git) */}
         {activePanel && (
           <>
-            {/* Mobile backdrop overlay when panel is open on small screens */}
-            <div
-              onClick={() => setActivePanel(null)}
-              className="md:hidden fixed inset-0 top-[82px] bg-black/40 z-20"
-            />
-            <div className="fixed md:static top-[82px] bottom-0 left-0 z-30 h-[calc(100%-82px)] md:h-full flex">
+            <div className="shrink-0 w-full h-[45%] min-h-0 flex z-30">
               {activePanel === 'projects' && (
                 <ProjectsPanel
                   projects={projects}
