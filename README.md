@@ -14,7 +14,10 @@ IDEan is a touch-first code editor that runs fully on your phone. The interface 
 
 - Tabs, line numbers, code folding, undo and redo
 - Find and replace, indent and outdent, autosave toggle
-- Lua and Luau syntax highlighting with syntax checks
+- Syntax highlighting for 17 languages, picked from the file extension: Lua, Luau, JavaScript, TypeScript, Python, HTML, CSS, JSON, Java, Kotlin, C, C++, C#, Go, Rust, PHP and Ruby
+- Lua and Luau syntax checks
+- Long lines wrap, so the editor only scrolls up and down
+- Big files open without freezing, because highlighting only runs on the lines on screen
 - Projects panel: create projects, clone from GitHub, open a folder from your phone
 - Folder access through Android's own picker, with saves written back to the folder
 - Git panel: stage, commit, push, pull and publish to GitHub

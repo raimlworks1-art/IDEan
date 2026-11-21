@@ -391,7 +391,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
   };
 
   return (
-    <aside className="w-full h-full min-h-0 bg-[#222223] border-b border-[#2F2F30] flex flex-col select-none shrink-0 z-30">
+    <aside className="w-72 max-w-[85vw] h-full bg-[#222223] border-r border-[#2F2F30] flex flex-col select-none shrink-0 z-30">
       {/* Panel Header */}
       <div className="h-9 px-3 border-b border-[#2F2F30] flex items-center justify-between">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-[#A6A6AA]">
@@ -464,7 +464,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
         )}
         {importError && <p className="text-[11px] text-[#C87D75]">{importError}</p>}
 
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-col gap-1">
           {projects.map((proj) => {
             const isSelected = proj.id === activeProject.id;
             return (
@@ -472,7 +472,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                 key={proj.id}
                 type="button"
                 onClick={() => onSelectProject(proj.id)}
-                className={`px-2.5 py-1 rounded text-[12px] font-medium border transition-colors ${
+                className={`w-full px-2.5 py-1.5 rounded text-left truncate text-[12px] font-medium border transition-colors ${
                   isSelected
                     ? 'bg-[#2E2E2F] text-[#E6E6E8] border-[#3E3E40]'
                     : 'bg-[#161617] text-[#A6A6AA] border-[#2F2F30] hover:text-[#E6E6E8]'

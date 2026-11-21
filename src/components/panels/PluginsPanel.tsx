@@ -14,7 +14,7 @@ export const PluginsPanel: React.FC<PluginsPanelProps> = ({ onClosePanel }) => {
   };
 
   return (
-    <aside className="w-full h-full min-h-0 bg-[#222223] border-b border-[#2F2F30] flex flex-col select-none shrink-0 z-30">
+    <aside className="w-72 max-w-[85vw] h-full bg-[#222223] border-r border-[#2F2F30] flex flex-col select-none shrink-0 z-30">
       {/* Header */}
       <div className="h-9 px-3 border-b border-[#2F2F30] flex items-center justify-between">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-[#A6A6AA]">

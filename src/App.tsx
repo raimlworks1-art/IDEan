@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue } from 'react';
 import {
   FileItem,
   FolderItem,
@@ -17,6 +17,7 @@ import { PluginsPanel } from './components/panels/PluginsPanel';
 import { GitPanel } from './components/panels/GitPanel';
 import { validateLuaSyntax } from './utils/luaTokenizer';
 import { Capacitor } from '@capacitor/core';
+import { detect_lang_id } from './utils/languages';
 import { DiskAccess, DiskFile, DiskHandle, registerDiskHandle, hasDiskHandle, writeBackToDisk } from './utils/diskImport';
 import {
   validateToken,
@@ -95,8 +96,7 @@ function mergeFiles(
       name: fileName,
       parentId,
       type: 'file',
-      // Projects set to Other never highlight, whatever the file extension is
-      language: projectLang === 'other' ? 'other' : inferLanguage(fileName, projectLang),
+      language: inferLanguage(fileName, projectLang),
       content: f.content,
       savedContent: f.content,
       lastModified: now,
@@ -118,6 +118,7 @@ function snapshotOf(nodes: ProjectNode[]) {
 const inferLanguage = (name: string, fallback: LanguageMode): LanguageMode => {
   if (/\.luau$/i.test(name)) return 'luau';
   if (/\.lua$/i.test(name)) return 'lua';
+  if (detect_lang_id(name, 'other') !== 'plain') return 'other';
   return fallback === 'other' ? 'other' : fallback;
 };
 
@@ -148,14 +149,15 @@ function loadInitialWorkspace(): PersistedWorkspace {
     if (raw) {
       const parsed = JSON.parse(raw) as PersistedWorkspace;
       if (parsed && Array.isArray(parsed.projects)) {
-        // Projects set to Other must never highlight: normalize any older files
         parsed.projects = parsed.projects.map((p) =>
           p.language === 'other' || (p.source && p.source !== 'app')
             ? {
                 ...p,
-                nodes: p.nodes.map((n) =>
-                  n.type === 'file' && n.language !== 'other' ? { ...n, language: 'other' as const } : n
-                ),
+                nodes: p.nodes.map((n) => {
+                  if (n.type !== 'file') return n;
+                  const want = inferLanguage(n.name, 'other');
+                  return n.language !== want ? { ...n, language: want } : n;
+                }),
               }
             : p
         );
@@ -192,16 +194,22 @@ export function App() {
 
   // Persist workspace & remember last opened file
   useEffect(() => {
-    try {
-      const payload: PersistedWorkspace = {
-        projects,
-        activeProjectId,
-        autosaveEnabled,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch {
-      // Ignore storage quota errors
-    }
+    const timer = window.setTimeout(() => {
+      try {
+        const payload: PersistedWorkspace = {
+          projects: projects.map((p) => ({
+            ...p,
+            nodes: p.nodes.map((n) => (n.type === 'file' ? { ...n, undoStack: [], redoStack: [] } : n)),
+          })),
+          activeProjectId,
+          autosaveEnabled,
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      } catch {
+        return;
+      }
+    }, 700);
+    return () => window.clearTimeout(timer);
   }, [projects, activeProjectId, autosaveEnabled]);
 
   // Listen to visualViewport for mobile on-screen keyboard responsiveness
@@ -325,9 +333,10 @@ export function App() {
             if (node.type !== 'file' || node.id !== activeFile.id) return node;
             if (node.content === newContent) return node;
 
+            const undo_keep = node.content.length > 200000 ? -19 : -79;
             const nextUndo = pushHistory
               ? [
-                  ...node.undoStack.slice(-79),
+                  ...node.undoStack.slice(undo_keep),
                   {
                     content: node.content,
                     selectionStart,
@@ -646,7 +655,7 @@ export function App() {
         nodes: proj.nodes.map((n) => {
           if (n.id !== nodeId) return n;
           if (n.type === 'file' && activeProject.language === 'other') {
-            return { ...n, name: newName, language: 'other' as const };
+            return { ...n, name: newName, language: inferLanguage(newName, 'other') };
           }
           if (n.type === 'file') {
             let finalName = newName;
@@ -1154,10 +1163,11 @@ export function App() {
     [updateActiveProject, showTransientNotice, auth]
   );
 
-  // Syntax diagnostics for current buffer
+  const deferred_big_content = useDeferredValue(activeFile.content.length > 60000 ? activeFile.content : '');
+  const deferred_content = activeFile.content.length > 60000 ? deferred_big_content : activeFile.content;
   const diagnostics = useMemo(
-    () => validateLuaSyntax(activeFile.content, activeFile.language),
-    [activeFile.content, activeFile.language]
+    () => validateLuaSyntax(deferred_content, activeFile.language),
+    [deferred_content, activeFile.language]
   );
 
   return (
@@ -1196,11 +1206,16 @@ export function App() {
       <div className="h-px w-full bg-[#2F2F30] shrink-0" />
 
       {/* 5. MAIN WORKSPACE: Optional Side Panel + Main Code Editor (Line Numbers | Code Editor) */}
-      <div className="flex-1 flex flex-col min-h-0 min-w-0 relative overflow-hidden">
+      <div className="flex-1 flex min-h-0 min-w-0 relative overflow-hidden">
         {/* Side Panels (Projects, Plugins, Git) */}
         {activePanel && (
           <>
-            <div className="shrink-0 w-full h-[45%] min-h-0 flex z-30">
+            {/* Mobile backdrop overlay when panel is open on small screens */}
+            <div
+              onClick={() => setActivePanel(null)}
+              className="md:hidden fixed inset-0 top-[82px] bg-black/40 z-20"
+            />
+            <div className="fixed md:static top-[82px] bottom-0 left-0 z-30 h-[calc(100%-82px)] md:h-full flex">
               {activePanel === 'projects' && (
                 <ProjectsPanel
                   projects={projects}
