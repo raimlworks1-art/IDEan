@@ -1,0 +1,44 @@
+<p align="center">
+  <img src="assets/icon.png" width="128" alt="IDEan icon">
+</p>
+
+<h1 align="center">IDEan</h1>
+
+<p align="center">A code editor for Android, built with web tech.</p>
+
+## What it is
+
+IDEan is a touch-first code editor that runs fully on your phone. The interface is React, TypeScript and Tailwind, bundled by Vite into a single page and packaged as an APK with Capacitor.
+
+## What it does now
+
+- Tabs, line numbers, code folding, undo and redo
+- Find and replace, indent and outdent, autosave toggle
+- Lua and Luau syntax highlighting with syntax checks
+- Projects panel: create projects, clone from GitHub, open a folder from your phone
+- Folder access through Android's own picker, with saves written back to the folder
+- Git panel: stage, commit, push, pull and publish to GitHub
+- Shows up in Android's "Open with" list for code files
+
+## Coming
+
+- Plugins
+- AI support
+- Editable colors
+- Custom fonts
+
+## Build
+
+GitHub Actions builds a signed release APK. Run the "Build APK" workflow in the Actions tab and download the `idean` artifact.
+
+To build a debug APK on the device, set `ANDROID_HOME` and run:
+
+```bash
+./build.sh
+```
+
+The APK is written to `IDEan.apk`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

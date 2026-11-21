@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.DocumentsContract;
+import android.provider.OpenableColumns;
 
 import androidx.activity.result.ActivityResult;
 
@@ -40,11 +41,90 @@ public class DiskAccessPlugin extends Plugin {
     private static final long MAX_FILE_BYTES = 1024L * 1024L;
     private static final long MAX_TOTAL_BYTES = 24L * 1024L * 1024L;
     private static final int MAX_FILES = 500;
+    private static final long MAX_OPEN_BYTES = 5L * 1024L * 1024L;
 
     private static class Stats {
         int skipped = 0;
         int count = 0;
         long total = 0;
+    }
+
+    @Override
+    public void load() {
+        final Intent launch = getActivity().getIntent();
+        new Thread(() -> deliver_intent(launch)).start();
+    }
+
+    @Override
+    protected void handleOnNewIntent(Intent intent) {
+        super.handleOnNewIntent(intent);
+        final Intent incoming = intent;
+        new Thread(() -> deliver_intent(incoming)).start();
+    }
+
+    private void deliver_intent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        if (!Intent.ACTION_VIEW.equals(action) && !Intent.ACTION_EDIT.equals(action)) return;
+        Uri uri = intent.getData();
+        if (uri == null) return;
+        ContentResolver resolver = getContext().getContentResolver();
+        JSObject out = new JSObject();
+        out.put("uri", uri.toString());
+        out.put("name", display_name(uri));
+        try {
+            resolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            );
+        } catch (Exception ignored) {
+        }
+        try {
+            byte[] bytes = read_bytes(resolver, uri, MAX_OPEN_BYTES);
+            if (bytes == null) {
+                out.put("error", "Could not open file (unreadable or over 5 MB)");
+            } else {
+                String text = new String(bytes, StandardCharsets.UTF_8);
+                if (text.substring(0, Math.min(4000, text.length())).indexOf('\u0000') >= 0) {
+                    out.put("error", "That file is binary");
+                } else {
+                    out.put("content", text);
+                }
+            }
+        } catch (Exception e) {
+            out.put("error", "Could not open file");
+        }
+        notifyListeners("file_opened", out, true);
+    }
+
+    private String display_name(Uri uri) {
+        try (Cursor c = getContext().getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst() && !c.isNull(0)) return c.getString(0);
+        } catch (Exception ignored) {
+        }
+        String last = uri.getLastPathSegment();
+        if (last == null) return "file";
+        int slash = last.lastIndexOf('/');
+        return slash >= 0 ? last.substring(slash + 1) : last;
+    }
+
+    @PluginMethod
+    public void write_uri(PluginCall call) {
+        final String uri_text = call.getString("uri");
+        final String content = call.getString("content", "");
+        if (uri_text == null) {
+            call.reject("missing_args");
+            return;
+        }
+        new Thread(() -> {
+            try (OutputStream out = getContext().getContentResolver().openOutputStream(Uri.parse(uri_text), "wt")) {
+                if (out == null) throw new Exception("no_stream");
+                out.write(content.getBytes(StandardCharsets.UTF_8));
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("write_failed: " + e.getMessage());
+            }
+        }).start();
     }
 
     @PluginMethod

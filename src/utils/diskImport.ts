@@ -8,7 +8,7 @@ export interface DiskFile {
   content: string;
 }
 
-export type DiskHandle = FileSystemDirectoryHandle | { native_tree: string };
+export type DiskHandle = FileSystemDirectoryHandle | { native_tree: string } | { native_file: string };
 
 export interface DiskFolder {
   name: string;
@@ -25,6 +25,7 @@ const MAX_FILES = 500;
 // Handles survive only for the current session (they can't live in localStorage)
 const handles = new Map<string, DiskHandle>();
 const TREES_KEY = 'sbox_disk_trees';
+const FILES_KEY = 'sbox_disk_files';
 
 interface NativeFolder {
   name: string;
@@ -33,39 +34,56 @@ interface NativeFolder {
   skipped: number;
 }
 
+export interface OpenedFile {
+  uri: string;
+  name: string;
+  content?: string;
+  error?: string;
+}
+
 interface DiskAccessApi {
   pick_folder(): Promise<NativeFolder>;
   write_file(opts: { tree_uri: string; path: string; content: string }): Promise<void>;
+  write_uri(opts: { uri: string; content: string }): Promise<void>;
+  addListener(
+    event: 'file_opened',
+    handler: (info: OpenedFile) => void
+  ): Promise<{ remove: () => Promise<void> }>;
 }
 
-const DiskAccess = registerPlugin<DiskAccessApi>('DiskAccess');
+export const DiskAccess = registerPlugin<DiskAccessApi>('DiskAccess');
 
-function load_trees(): Record<string, string> {
+function load_map(key: string): Record<string, string> {
   try {
-    return JSON.parse(localStorage.getItem(TREES_KEY) || '{}');
+    return JSON.parse(localStorage.getItem(key) || '{}');
   } catch {
     return {};
   }
 }
 
+function save_entry(key: string, projectId: string, value: string) {
+  const map = load_map(key);
+  map[projectId] = value;
+  try {
+    localStorage.setItem(key, JSON.stringify(map));
+  } catch {
+    return;
+  }
+}
+
 export const registerDiskHandle = (projectId: string, h: DiskHandle) => {
   handles.set(projectId, h);
-  if ('native_tree' in h) {
-    const trees = load_trees();
-    trees[projectId] = h.native_tree;
-    try {
-      localStorage.setItem(TREES_KEY, JSON.stringify(trees));
-    } catch {
-      return;
-    }
-  }
+  if ('native_tree' in h) save_entry(TREES_KEY, projectId, h.native_tree);
+  if ('native_file' in h) save_entry(FILES_KEY, projectId, h.native_file);
 };
 
 function get_handle(projectId: string): DiskHandle | undefined {
   const known = handles.get(projectId);
   if (known) return known;
-  const uri = load_trees()[projectId];
-  return uri ? { native_tree: uri } : undefined;
+  const tree = load_map(TREES_KEY)[projectId];
+  if (tree) return { native_tree: tree };
+  const file = load_map(FILES_KEY)[projectId];
+  return file ? { native_file: file } : undefined;
 }
 
 export const hasDiskHandle = (projectId: string) => get_handle(projectId) !== undefined;
@@ -202,6 +220,14 @@ export async function writeBackToDisk(
   if ('native_tree' in root) {
     try {
       await DiskAccess.write_file({ tree_uri: root.native_tree, path, content });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if ('native_file' in root) {
+    try {
+      await DiskAccess.write_uri({ uri: root.native_file, content });
       return true;
     } catch {
       return false;

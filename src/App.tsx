@@ -16,7 +16,8 @@ import { ProjectsPanel } from './components/panels/ProjectsPanel';
 import { PluginsPanel } from './components/panels/PluginsPanel';
 import { GitPanel } from './components/panels/GitPanel';
 import { validateLuaSyntax } from './utils/luaTokenizer';
-import { DiskFile, DiskHandle, registerDiskHandle, hasDiskHandle, writeBackToDisk } from './utils/diskImport';
+import { Capacitor } from '@capacitor/core';
+import { DiskAccess, DiskFile, DiskHandle, registerDiskHandle, hasDiskHandle, writeBackToDisk } from './utils/diskImport';
 import {
   validateToken,
   createRepo,
@@ -797,6 +798,20 @@ export function App() {
     },
     [showTransientNotice]
   );
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const pending = DiskAccess.addListener('file_opened', (info) => {
+      if (info.error || info.content === undefined) {
+        showTransientNotice(info.error || 'Could not open file');
+        return;
+      }
+      handleImportProject(info.name, [{ path: info.name, content: info.content }], { native_file: info.uri }, 0);
+    });
+    return () => {
+      void pending.then((h) => h.remove());
+    };
+  }, [handleImportProject, showTransientNotice]);
 
   const handleDeleteProject = useCallback(
     (projectId: string) => {
