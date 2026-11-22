@@ -20,10 +20,16 @@ import {
   Search,
   Loader2,
   FolderPlus as NewProjectIcon,
+  MoreHorizontal,
+  Copy,
+  Scissors,
+  ClipboardPaste,
+  CopyPlus,
 } from 'lucide-react';
 import { FileItem, FolderItem, GitAuth, LanguageMode, Project, ProjectNode } from '../../types/ide';
 import { listRepos, RepoSummary } from '../../utils/github';
 import { DiskFile, DiskHandle, pickFolderFromDisk } from '../../utils/diskImport';
+import { LANGUAGE_OPTIONS, ext_for_mode, mode_for_name } from '../../utils/languages';
 
 interface ProjectsPanelProps {
   projects: Project[];
@@ -45,6 +51,12 @@ interface ProjectsPanelProps {
   onCreateFolder: (name: string, parentId: string | null) => void;
   onRenameNode: (nodeId: string, newName: string) => void;
   onDeleteNode: (nodeId: string) => void;
+  clipboard: { name: string; mode: 'copy' | 'cut'; is_folder: boolean } | null;
+  onCopyNode: (nodeId: string) => void;
+  onCutNode: (nodeId: string) => void;
+  onPasteNode: (targetParentId: string | null) => void;
+  onDuplicateNode: (nodeId: string) => void;
+  onClearClipboard: () => void;
   onToggleFolder: (folderId: string) => void;
   onSaveAll: () => void;
   onClosePanel: () => void;
@@ -65,6 +77,12 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
   onCreateFolder,
   onRenameNode,
   onDeleteNode,
+  clipboard,
+  onCopyNode,
+  onCutNode,
+  onPasteNode,
+  onDuplicateNode,
+  onClearClipboard,
   onToggleFolder,
   onSaveAll,
   onClosePanel,
@@ -133,6 +151,8 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
   const [newItemName, setNewItemName] = useState('');
   const [newFileExt, setNewFileExt] = useState<LanguageMode>('luau');
 
+  const [menuNodeId, setMenuNodeId] = useState<string | null>(null);
+  const [confirmDeleteNodeId, setConfirmDeleteNodeId] = useState<string | null>(null);
   const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
@@ -157,15 +177,13 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
     if (creatingType === 'file') {
       let finalName = trimmed;
       let lang: LanguageMode = newFileExt;
-      if (finalName.endsWith('.luau')) {
-        lang = 'luau';
-      } else if (finalName.endsWith('.lua')) {
-        lang = 'lua';
-      } else if (newFileExt === 'other') {
-        // Plain-text file: keep the name exactly as typed (e.g. main.cpp)
+      const by_name = mode_for_name(finalName);
+      if (by_name) {
+        lang = by_name;
+      } else if (/\.[^./\\]+$/.test(finalName) || newFileExt === 'other') {
         lang = 'other';
       } else {
-        finalName = `${finalName}.${newFileExt}`;
+        finalName = `${finalName}.${ext_for_mode(newFileExt)}`;
       }
       onCreateFile(finalName, targetParentId, lang);
     } else if (creatingType === 'folder') {
@@ -196,12 +214,6 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
     }
   };
 
-  const startRename = (node: ProjectNode, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setRenamingNodeId(node.id);
-    setRenameValue(node.name);
-  };
-
   const submitRename = (nodeId: string) => {
     const trimmed = renameValue.trim();
     if (trimmed) {
@@ -209,6 +221,113 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
     }
     setRenamingNodeId(null);
   };
+
+  const close_menu = () => {
+    setMenuNodeId(null);
+    setConfirmDeleteNodeId(null);
+  };
+
+  const toggle_menu = (nodeId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmDeleteNodeId(null);
+    setMenuNodeId((prev) => (prev === nodeId ? null : nodeId));
+  };
+
+  const render_menu = (node: ProjectNode, is_folder: boolean, depth: number): React.ReactNode => {
+    if (menuNodeId !== node.id) return null;
+    const confirming = confirmDeleteNodeId === node.id;
+    const action = (
+      key: string,
+      label: string,
+      icon: React.ReactNode,
+      on_click: () => void,
+      danger = false
+    ) => (
+      <button
+        key={key}
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          on_click();
+        }}
+        className={`h-7 px-2 rounded border text-[11px] flex items-center gap-1 transition-colors ${
+          danger
+            ? 'border-[#5A3A37] text-[#C87D75] bg-[#2A1F1E]'
+            : 'border-[#2F2F30] text-[#E6E6E8] bg-[#161617] hover:bg-[#2E2E2F]'
+        }`}
+      >
+        {icon}
+        <span>{label}</span>
+      </button>
+    );
+    return (
+      <div
+        style={{ paddingLeft: `${depth * 14 + (is_folder ? 10 : 22)}px` }}
+        className="pr-2 py-1 flex flex-wrap gap-1"
+      >
+        {action('rename', 'Rename', <Pencil className="w-3 h-3" />, () => {
+          setRenamingNodeId(node.id);
+          setRenameValue(node.name);
+          close_menu();
+        })}
+        {action('copy', 'Copy', <Copy className="w-3 h-3" />, () => {
+          onCopyNode(node.id);
+          close_menu();
+        })}
+        {action('cut', 'Cut', <Scissors className="w-3 h-3" />, () => {
+          onCutNode(node.id);
+          close_menu();
+        })}
+        {clipboard &&
+          action('paste', is_folder ? 'Paste inside' : 'Paste here', <ClipboardPaste className="w-3 h-3" />, () => {
+            onPasteNode(is_folder ? node.id : node.parentId);
+            close_menu();
+          })}
+        {action('duplicate', 'Duplicate', <CopyPlus className="w-3 h-3" />, () => {
+          onDuplicateNode(node.id);
+          close_menu();
+        })}
+        {is_folder &&
+          action('new-file', 'New file', <FilePlus2 className="w-3 h-3" />, () => {
+            startCreateFile(node.id);
+            close_menu();
+          })}
+        {is_folder &&
+          action('new-folder', 'New folder', <FolderPlus className="w-3 h-3" />, () => {
+            startCreateFolder(node.id);
+            close_menu();
+          })}
+        {action(
+          'delete',
+          confirming ? 'Tap again to delete' : 'Delete',
+          <Trash2 className="w-3 h-3" />,
+          () => {
+            if (confirming) {
+              onDeleteNode(node.id);
+              close_menu();
+            } else {
+              setConfirmDeleteNodeId(node.id);
+            }
+          },
+          true
+        )}
+      </div>
+    );
+  };
+
+  const more_button = (node: ProjectNode) => (
+    <button
+      type="button"
+      onClick={(e) => toggle_menu(node.id, e)}
+      title="Actions: rename, copy, cut, paste, duplicate, delete"
+      aria-label="File actions"
+      className={`p-1.5 rounded shrink-0 transition-colors ${
+        menuNodeId === node.id ? 'text-[#E6E6E8] bg-[#2E2E2F]' : 'text-[#A6A6AA] hover:text-[#E6E6E8]'
+      }`}
+    >
+      <MoreHorizontal className="w-4 h-4" />
+    </button>
+  );
 
   const renderTreeNodes = (parentId: string | null, depth = 0): React.ReactNode => {
     const children = activeProject.nodes
@@ -269,41 +388,10 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                 )}
               </div>
 
-              {!isRenaming && (
-                <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      startCreateFile(folder.id);
-                    }}
-                    title="New file in folder"
-                    className="p-1 text-[#707073] hover:text-[#E6E6E8] rounded"
-                  >
-                    <FilePlus2 className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => startRename(folder, e)}
-                    title="Rename folder"
-                    className="p-1 text-[#707073] hover:text-[#E6E6E8] rounded"
-                  >
-                    <Pencil className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteNode(folder.id);
-                    }}
-                    title="Delete folder"
-                    className="p-1 text-[#707073] hover:text-[#C87D75] rounded"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
+              {!isRenaming && more_button(folder)}
             </div>
+
+            {render_menu(folder, true, depth)}
 
             {folder.isOpen && renderTreeNodes(folder.id, depth + 1)}
           </div>
@@ -318,8 +406,8 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
       const ext = dotIdx > 0 ? file.name.slice(dotIdx) : '';
 
       return (
+        <div key={file.id}>
         <div
-          key={file.id}
           style={{ paddingLeft: `${depth * 14 + 22}px` }}
           onClick={() => onSelectFile(file.id)}
           className={`group h-7 pr-2 flex items-center justify-between text-[12px] cursor-pointer rounded-xs transition-colors ${
@@ -362,29 +450,9 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
             )}
           </div>
 
-          {!isRenaming && (
-            <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0">
-              <button
-                type="button"
-                onClick={(e) => startRename(file, e)}
-                title="Rename file"
-                className="p-1 text-[#707073] hover:text-[#E6E6E8] rounded"
-              >
-                <Pencil className="w-3 h-3" />
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteNode(file.id);
-                }}
-                title="Delete file"
-                className="p-1 text-[#707073] hover:text-[#C87D75] rounded"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
-          )}
+          {!isRenaming && more_button(file)}
+        </div>
+        {render_menu(file, false, depth)}
         </div>
       );
     });
@@ -642,7 +710,7 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
           <button
             type="button"
             onClick={() => startCreateFile(null)}
-            title="Create new .lua or .luau file"
+            title="Create new file"
             className="px-2 py-1 rounded bg-[#161617] hover:bg-[#2E2E2F] border border-[#2F2F30] text-[11px] text-[#E6E6E8] flex items-center gap-1 transition-colors"
           >
             <FilePlus2 className="w-3 h-3 text-[#B4B4B8]" />
@@ -693,9 +761,11 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                 onChange={(e) => setNewFileExt(e.target.value as LanguageMode)}
                 className="bg-[#222223] border border-[#3E3E40] rounded px-1.5 py-1 text-[11px] font-mono-code text-[#B4B4B8] outline-none"
               >
-                <option value="luau">.luau</option>
-                <option value="lua">.lua</option>
-                <option value="other">other</option>
+                {LANGUAGE_OPTIONS.map((o) => (
+                  <option key={o.mode} value={o.mode}>
+                    {o.ext ? `.${o.ext}` : 'other'}
+                  </option>
+                ))}
               </select>
             )}
           </div>
@@ -717,6 +787,32 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
             </button>
           </div>
         </form>
+      )}
+
+      {clipboard && (
+        <div className="px-2.5 py-1.5 border-b border-[#2F2F30] bg-[#1F1F20] flex items-center justify-between gap-2 text-[11px]">
+          <span className="truncate text-[#A6A6AA]">
+            {clipboard.mode === 'cut' ? 'Cut' : 'Copied'}: <span className="text-[#E6E6E8]">{clipboard.name}</span>
+          </span>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => onPasteNode(null)}
+              className="h-6 px-2 rounded border border-[#3E3E40] bg-[#2E2E2F] text-[#E6E6E8] flex items-center gap-1"
+            >
+              <ClipboardPaste className="w-3 h-3" />
+              <span>Paste in root</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClearClipboard}
+              title="Clear clipboard"
+              className="h-6 w-6 rounded flex items-center justify-center text-[#707073] hover:text-[#E6E6E8]"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
       )}
 
       {/* File Tree */}
@@ -759,9 +855,11 @@ export const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                 onChange={(e) => setProjLang(e.target.value as LanguageMode)}
                 className="w-full bg-[#161617] border border-[#3E3E40] rounded px-2 py-1.5 text-[13px] text-[#E6E6E8] outline-none focus:border-[#B4B4B8]"
               >
-                <option value="luau">Luau</option>
-                <option value="lua">Lua</option>
-                <option value="other">Other (no highlighting)</option>
+                {LANGUAGE_OPTIONS.map((o) => (
+                  <option key={o.mode} value={o.mode}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
             </label>
 

@@ -1,4 +1,17 @@
-export type LanguageMode = 'lua' | 'luau' | 'other';
+export type LanguageMode =
+  | 'lua'
+  | 'luau'
+  | 'other'
+  | 'javascript'
+  | 'jsx'
+  | 'typescript'
+  | 'tsx'
+  | 'python'
+  | 'html'
+  | 'css'
+  | 'c'
+  | 'cpp'
+  | 'csharp';
 
 export type ProjectSource = 'app' | 'disk' | 'github';
 

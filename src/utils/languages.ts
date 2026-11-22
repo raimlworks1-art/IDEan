@@ -4,7 +4,9 @@ export type LangId =
   | 'lua'
   | 'luau'
   | 'javascript'
+  | 'jsx'
   | 'typescript'
+  | 'tsx'
   | 'python'
   | 'html'
   | 'css'
@@ -48,6 +50,7 @@ interface LangDef {
   preproc?: boolean;
   decorators?: boolean;
   sigils?: boolean;
+  jsx?: boolean;
   capital_types?: boolean;
   comment_marker: string;
 }
@@ -61,7 +64,7 @@ const JS_KEYWORDS =
 const JS_BUILTINS =
   'console window document Math JSON Object Array String Number Boolean Date Promise Map Set WeakMap WeakSet Symbol Error RegExp parseInt parseFloat isNaN require module exports process globalThis setTimeout setInterval clearTimeout clearInterval fetch';
 
-const DEFS: Record<Exclude<LangId, 'lua' | 'luau' | 'plain'>, LangDef> = {
+const DEFS: Record<string, LangDef> = {
   javascript: {
     id: 'javascript',
     label: 'JavaScript',
@@ -295,15 +298,18 @@ const DEFS: Record<Exclude<LangId, 'lua' | 'luau' | 'plain'>, LangDef> = {
   },
 };
 
+DEFS.jsx = { ...DEFS.javascript, id: 'jsx', label: 'JSX', jsx: true };
+DEFS.tsx = { ...DEFS.typescript, id: 'tsx', label: 'TSX', jsx: true };
+
 const EXT_TO_LANG: Record<string, LangId> = {
   lua: 'lua',
   luau: 'luau',
   js: 'javascript',
   mjs: 'javascript',
   cjs: 'javascript',
-  jsx: 'javascript',
+  jsx: 'jsx',
   ts: 'typescript',
-  tsx: 'typescript',
+  tsx: 'tsx',
   mts: 'typescript',
   cts: 'typescript',
   py: 'python',
@@ -338,8 +344,80 @@ const EXT_TO_LANG: Record<string, LangId> = {
   rake: 'ruby',
 };
 
+const MODE_TO_LANG: Partial<Record<LanguageMode, LangId>> = {
+  javascript: 'javascript',
+  jsx: 'jsx',
+  typescript: 'typescript',
+  tsx: 'tsx',
+  python: 'python',
+  html: 'html',
+  css: 'css',
+  c: 'c',
+  cpp: 'cpp',
+  csharp: 'csharp',
+};
+
+export const LANGUAGE_OPTIONS: { mode: LanguageMode; label: string; ext: string }[] = [
+  { mode: 'luau', label: 'Luau', ext: 'luau' },
+  { mode: 'lua', label: 'Lua 5.4', ext: 'lua' },
+  { mode: 'javascript', label: 'JavaScript', ext: 'js' },
+  { mode: 'jsx', label: 'JSX', ext: 'jsx' },
+  { mode: 'typescript', label: 'TypeScript', ext: 'ts' },
+  { mode: 'tsx', label: 'TSX', ext: 'tsx' },
+  { mode: 'python', label: 'Python', ext: 'py' },
+  { mode: 'html', label: 'HTML', ext: 'html' },
+  { mode: 'css', label: 'CSS', ext: 'css' },
+  { mode: 'c', label: 'C', ext: 'c' },
+  { mode: 'cpp', label: 'C++', ext: 'cpp' },
+  { mode: 'csharp', label: 'C#', ext: 'cs' },
+  { mode: 'other', label: 'Other (plain)', ext: '' },
+];
+
+export function ext_for_mode(mode: LanguageMode): string {
+  return LANGUAGE_OPTIONS.find((o) => o.mode === mode)?.ext ?? '';
+}
+
+const EXT_TO_MODE: Record<string, LanguageMode> = {
+  lua: 'lua',
+  luau: 'luau',
+  js: 'javascript',
+  mjs: 'javascript',
+  cjs: 'javascript',
+  jsx: 'jsx',
+  ts: 'typescript',
+  mts: 'typescript',
+  cts: 'typescript',
+  tsx: 'tsx',
+  py: 'python',
+  pyw: 'python',
+  pyi: 'python',
+  html: 'html',
+  htm: 'html',
+  xhtml: 'html',
+  css: 'css',
+  scss: 'css',
+  less: 'css',
+  c: 'c',
+  h: 'c',
+  cpp: 'cpp',
+  cc: 'cpp',
+  cxx: 'cpp',
+  hpp: 'cpp',
+  hh: 'cpp',
+  hxx: 'cpp',
+  cs: 'csharp',
+};
+
+export function mode_for_name(file_name: string): LanguageMode | null {
+  const dot = file_name.lastIndexOf('.');
+  if (dot < 0) return null;
+  return EXT_TO_MODE[file_name.slice(dot + 1).toLowerCase()] ?? null;
+}
+
 export function detect_lang_id(file_name: string, mode: LanguageMode): LangId {
   if (mode === 'lua' || mode === 'luau') return mode;
+  const from_mode = MODE_TO_LANG[mode];
+  if (from_mode) return from_mode;
   const dot = file_name.lastIndexOf('.');
   if (dot < 0) return 'plain';
   return EXT_TO_LANG[file_name.slice(dot + 1).toLowerCase()] ?? 'plain';
@@ -354,6 +432,12 @@ export function lang_label(id: LangId): string {
   if (id === 'luau') return 'Luau (--!strict)';
   if (id === 'plain') return 'Other (plain)';
   return DEFS[id].label;
+}
+
+export function lang_words(id: LangId): string[] {
+  const def = def_for(id);
+  if (!def) return [];
+  return [...def.keywords, ...def.literals, ...def.builtins, ...def.types];
 }
 
 export function comment_marker_for(id: LangId): string {
@@ -642,6 +726,8 @@ function tokenize_css_line(line: string, state: number, out: LineToken[] | null)
 function tokenize_generic_line(line: string, def: LangDef, state: number, out: LineToken[] | null): number {
   let i = 0;
   const n = line.length;
+  let in_jsx_tag = false;
+  let jsx_brace = 0;
 
   if (state > 0) {
     const m = def.multi[state - 1];
@@ -695,6 +781,65 @@ function tokenize_generic_line(line: string, def: LangDef, state: number, out: L
       emit(out, line.slice(i, j), 'whitespace');
       i = j;
       continue;
+    }
+
+    if (def.jsx) {
+      if (in_jsx_tag && jsx_brace === 0) {
+        if (ch === '>') {
+          emit(out, '>', 'punctuation');
+          in_jsx_tag = false;
+          i++;
+          continue;
+        }
+        if (ch === '/' && line[i + 1] === '>') {
+          emit(out, '/>', 'punctuation');
+          in_jsx_tag = false;
+          i += 2;
+          continue;
+        }
+      }
+      if (in_jsx_tag && ch === '{') {
+        jsx_brace++;
+        emit(out, ch, 'table-brace');
+        i++;
+        continue;
+      }
+      if (in_jsx_tag && jsx_brace > 0 && ch === '}') {
+        jsx_brace--;
+        emit(out, ch, 'table-brace');
+        i++;
+        continue;
+      }
+      if (ch === '<' && !in_jsx_tag) {
+        const tag = /^<(\/?)([A-Za-z][A-Za-z0-9_.:-]*)?(>?)/.exec(line.slice(i, i + 96));
+        if (tag && (tag[2] || tag[3])) {
+          const before = line.slice(0, i).trimEnd();
+          const prev_sig = before.length > 0 ? before[before.length - 1] : '';
+          const starts_tag =
+            tag[1] !== '' || prev_sig === '' || '(=,:?&|>{[};'.includes(prev_sig) || /\breturn$/.test(before);
+          if (starts_tag) {
+            emit(out, tag[1] ? '</' : '<', 'punctuation');
+            const name = tag[2] || '';
+            if (name) emit(out, name, /^[A-Z]/.test(name) || name.includes('.') ? 'type' : 'keyword');
+            i += 1 + tag[1].length + name.length;
+            if (tag[3]) {
+              emit(out, '>', 'punctuation');
+              i++;
+            } else {
+              in_jsx_tag = !tag[1];
+              if (tag[1]) {
+                const close = line.indexOf('>', i);
+                if (close >= 0) {
+                  emit(out, line.slice(i, close), 'identifier');
+                  emit(out, '>', 'punctuation');
+                  i = close + 1;
+                }
+              }
+            }
+            continue;
+          }
+        }
+      }
     }
 
     let handled = false;
@@ -820,7 +965,8 @@ function tokenize_generic_line(line: string, def: LangDef, state: number, out: L
       }
 
       let type: TokenType = 'identifier';
-      if (def.keywords.has(word)) type = 'keyword';
+      if (in_jsx_tag && jsx_brace === 0) type = 'property';
+      else if (def.keywords.has(word)) type = 'keyword';
       else if (def.literals.has(word)) type = word === 'null' || word === 'nil' || word === 'None' || word === 'undefined' ? 'nil' : 'boolean';
       else if (def.types.has(word)) type = 'type';
       else if (def.builtins.has(word)) type = 'builtin';

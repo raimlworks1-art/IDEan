@@ -17,7 +17,8 @@ import { PluginsPanel } from './components/panels/PluginsPanel';
 import { GitPanel } from './components/panels/GitPanel';
 import { validateLuaSyntax } from './utils/luaTokenizer';
 import { Capacitor } from '@capacitor/core';
-import { detect_lang_id } from './utils/languages';
+import { LANGUAGE_OPTIONS, detect_lang_id, ext_for_mode, mode_for_name } from './utils/languages';
+import { NodeClipboard, paste_node, remove_subtree } from './utils/nodeOps';
 import { DiskAccess, DiskFile, DiskHandle, registerDiskHandle, hasDiskHandle, writeBackToDisk } from './utils/diskImport';
 import {
   validateToken,
@@ -116,10 +117,63 @@ function snapshotOf(nodes: ProjectNode[]) {
 }
 
 const inferLanguage = (name: string, fallback: LanguageMode): LanguageMode => {
-  if (/\.luau$/i.test(name)) return 'luau';
-  if (/\.lua$/i.test(name)) return 'lua';
+  const by_name = mode_for_name(name);
+  if (by_name) return by_name;
   if (detect_lang_id(name, 'other') !== 'plain') return 'other';
-  return fallback === 'other' ? 'other' : fallback;
+  return fallback === 'lua' || fallback === 'luau' ? fallback : 'other';
+};
+
+const language_label = (mode: LanguageMode): string =>
+  LANGUAGE_OPTIONS.find((o) => o.mode === mode)?.label ?? 'Other';
+
+const starter_for = (language: LanguageMode, name: string): { file: string; code: string } => {
+  const safe = name.replace(/["\\\n]/g, '');
+  switch (language) {
+    case 'luau':
+      return { file: 'init.luau', code: `--!strict\n-- ${name} Entry Point\n\nprint("Hello from ${safe}")\n` };
+    case 'lua':
+      return { file: 'init.lua', code: `-- ${name} Entry Point\n\nprint("Hello from ${safe}")\n` };
+    case 'javascript':
+      return { file: 'index.js', code: `console.log("Hello from ${safe}");\n` };
+    case 'jsx':
+      return {
+        file: 'App.jsx',
+        code: `export default function App() {\n  return <h1 className="title">Hello from ${safe}</h1>;\n}\n`,
+      };
+    case 'typescript':
+      return { file: 'index.ts', code: `const message: string = "Hello from ${safe}";\nconsole.log(message);\n` };
+    case 'tsx':
+      return {
+        file: 'App.tsx',
+        code: `export default function App(): JSX.Element {\n  return <h1 className="title">Hello from ${safe}</h1>;\n}\n`,
+      };
+    case 'python':
+      return { file: 'main.py', code: `def main():\n    print("Hello from ${safe}")\n\n\nif __name__ == "__main__":\n    main()\n` };
+    case 'html':
+      return {
+        file: 'index.html',
+        code: `<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>${safe}</title>\n</head>\n<body>\n  <h1>Hello from ${safe}</h1>\n</body>\n</html>\n`,
+      };
+    case 'css':
+      return { file: 'style.css', code: `body {\n  margin: 0;\n  font-family: sans-serif;\n}\n` };
+    case 'c':
+      return {
+        file: 'main.c',
+        code: `#include <stdio.h>\n\nint main(void) {\n  printf("Hello from ${safe}\\n");\n  return 0;\n}\n`,
+      };
+    case 'cpp':
+      return {
+        file: 'main.cpp',
+        code: `#include <iostream>\n\nint main() {\n  std::cout << "Hello from ${safe}" << std::endl;\n  return 0;\n}\n`,
+      };
+    case 'csharp':
+      return {
+        file: 'Program.cs',
+        code: `using System;\n\nclass Program\n{\n    static void Main()\n    {\n        Console.WriteLine("Hello from ${safe}");\n    }\n}\n`,
+      };
+    default:
+      return { file: 'main.txt', code: '' };
+  }
 };
 
 // Resolve "folder/sub/file.ext" for a node
@@ -487,11 +541,11 @@ export function App() {
         ...proj,
         nodes: proj.nodes.map((node) => {
           if (node.type !== 'file' || node.id !== activeFile.id) return node;
-          // 'other' keeps the file name as-is (any extension); Lua/Luau swap the extension
+          const new_ext = ext_for_mode(newLang);
           const updatedName =
-            newLang === 'other'
+            newLang === 'other' || !new_ext
               ? node.name
-              : `${node.name.replace(/\.[^./\\]+$/, '')}.${newLang}`;
+              : `${node.name.replace(/\.[^./\\]+$/, '')}.${new_ext}`;
           return {
             ...node,
             language: newLang,
@@ -499,9 +553,7 @@ export function App() {
           };
         }),
       }));
-      showTransientNotice(
-        `Switched mode to ${newLang === 'luau' ? 'Luau' : newLang === 'lua' ? 'Lua 5.4' : 'Other (plain text)'}`
-      );
+      showTransientNotice(`Switched language to ${language_label(newLang)}`);
     },
     [activeFile.id, updateActiveProject, showTransientNotice]
   );
@@ -590,14 +642,13 @@ export function App() {
   const handleCreateFile = useCallback(
     (name: string, parentId: string | null, requestedLanguage: LanguageMode) => {
       const id = `file-${Date.now()}`;
-      const language: LanguageMode =
-        activeProject.language === 'other' ? 'other' : requestedLanguage;
+      const language: LanguageMode = requestedLanguage;
       const starterTemplate =
-        language === 'other'
-          ? ''
-          : language === 'luau'
+        language === 'luau'
           ? `--!strict\n-- ${name}\n\nlocal Module = {}\n\nfunction Module.init(): boolean\n  return true\nend\n\nreturn Module\n`
-          : `-- ${name}\n\nlocal Module = {}\n\nfunction Module.init()\n  return true\nend\n\nreturn Module\n`;
+          : language === 'lua'
+          ? `-- ${name}\n\nlocal Module = {}\n\nfunction Module.init()\n  return true\nend\n\nreturn Module\n`
+          : '';
 
       const newFile: FileItem = {
         id,
@@ -620,13 +671,13 @@ export function App() {
       }));
       showTransientNotice(`Created ${name}`);
     },
-    [activeProject.language, updateActiveProject, showTransientNotice]
+    [updateActiveProject, showTransientNotice]
   );
 
   const handleQuickNewFile = useCallback(() => {
     const count = allProjectFiles.length + 1;
     const lang: LanguageMode = activeProject.language || 'luau';
-    const ext = lang === 'other' ? 'txt' : lang;
+    const ext = ext_for_mode(lang) || 'txt';
     handleCreateFile(`Script${count}.${ext}`, null, lang);
   }, [allProjectFiles.length, activeProject.language, handleCreateFile]);
 
@@ -660,9 +711,9 @@ export function App() {
           if (n.type === 'file') {
             let finalName = newName;
             let lang: LanguageMode = n.language;
-            if (/\.luau$/i.test(finalName)) lang = 'luau';
-            else if (/\.lua$/i.test(finalName)) lang = 'lua';
-            else if (lang !== 'other' && !/\.[^./\\]+$/.test(finalName)) finalName = `${finalName}.${lang}`;
+            const by_name = mode_for_name(finalName);
+            if (by_name) lang = by_name;
+            else if (lang !== 'other' && !/\.[^./\\]+$/.test(finalName)) finalName = `${finalName}.${ext_for_mode(lang)}`;
             else if (/\.[^./\\]+$/.test(finalName)) lang = 'other';
             return { ...n, name: finalName, language: lang };
           }
@@ -675,42 +726,72 @@ export function App() {
 
   const handleDeleteNode = useCallback(
     (nodeId: string) => {
-      updateActiveProject((proj) => {
-        // Also collect child nodes if deleting a folder
-        const toDelete = new Set<string>([nodeId]);
-        let added = true;
-        while (added) {
-          added = false;
-          for (const n of proj.nodes) {
-            if (n.parentId && toDelete.has(n.parentId) && !toDelete.has(n.id)) {
-              toDelete.add(n.id);
-              added = true;
-            }
-          }
-        }
-
-        const remainingNodes = proj.nodes.filter((n) => !toDelete.has(n.id));
-        const remainingFiles = remainingNodes.filter((n): n is FileItem => n.type === 'file');
-        const remainingOpen = proj.openFileIds.filter((id) => !toDelete.has(id));
-        const nextActive = toDelete.has(proj.activeFileId)
-          ? remainingOpen[0] || remainingFiles[0]?.id || ''
-          : proj.activeFileId;
-
-        return {
-          ...proj,
-          nodes: remainingNodes,
-          openFileIds:
-            remainingOpen.length > 0
-              ? remainingOpen
-              : remainingFiles[0]
-              ? [remainingFiles[0].id]
-              : [],
-          activeFileId: nextActive,
-        };
-      });
+      updateActiveProject((proj) => remove_subtree(proj, nodeId));
       showTransientNotice('Deleted item');
     },
     [updateActiveProject, showTransientNotice]
+  );
+
+  const [node_clipboard, set_node_clipboard] = useState<NodeClipboard | null>(null);
+
+  const clipboard_info = useMemo(() => {
+    if (!node_clipboard) return null;
+    const src = projects.find((p) => p.id === node_clipboard.project_id);
+    const node = src?.nodes.find((n) => n.id === node_clipboard.node_id);
+    if (!node) return null;
+    return { name: node.name, mode: node_clipboard.mode, is_folder: node.type === 'folder' };
+  }, [node_clipboard, projects]);
+
+  const handleCopyNode = useCallback(
+    (nodeId: string) => {
+      set_node_clipboard({ project_id: activeProject.id, node_id: nodeId, mode: 'copy' });
+      showTransientNotice('Copied');
+    },
+    [activeProject.id, showTransientNotice]
+  );
+
+  const handleCutNode = useCallback(
+    (nodeId: string) => {
+      set_node_clipboard({ project_id: activeProject.id, node_id: nodeId, mode: 'cut' });
+      showTransientNotice('Cut');
+    },
+    [activeProject.id, showTransientNotice]
+  );
+
+  const handlePasteNode = useCallback(
+    (targetParentId: string | null) => {
+      if (!node_clipboard) return;
+      const result = paste_node(
+        projects,
+        node_clipboard,
+        activeProject.id,
+        targetParentId,
+        hasDiskHandle(activeProject.id),
+        Date.now()
+      );
+      if (result.ok) setProjects(result.projects);
+      if (result.clear_clipboard) set_node_clipboard(null);
+      showTransientNotice(result.notice);
+    },
+    [node_clipboard, projects, activeProject.id, showTransientNotice]
+  );
+
+  const handleDuplicateNode = useCallback(
+    (nodeId: string) => {
+      const node = activeProject.nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+      const result = paste_node(
+        projects,
+        { project_id: activeProject.id, node_id: nodeId, mode: 'copy' },
+        activeProject.id,
+        node.parentId,
+        hasDiskHandle(activeProject.id),
+        Date.now()
+      );
+      if (result.ok) setProjects(result.projects);
+      showTransientNotice(result.ok ? `Duplicated ${node.name}` : result.notice);
+    },
+    [projects, activeProject.id, activeProject.nodes, showTransientNotice]
   );
 
   const handleToggleFolder = useCallback(
@@ -729,14 +810,9 @@ export function App() {
     (name: string, language: LanguageMode) => {
       const now = Date.now();
       const starterFileId = `file-${now}`;
-      const starterName =
-        language === 'luau' ? 'init.luau' : language === 'lua' ? 'init.lua' : 'main.txt';
-      const starterCode =
-        language === 'luau'
-          ? `--!strict\n-- ${name} Entry Point\n\nprint("Hello from ${name}")\n`
-          : language === 'lua'
-          ? `-- ${name} Entry Point\n\nprint("Hello from ${name}")\n`
-          : '';
+      const starter = starter_for(language, name);
+      const starterName = starter.file;
+      const starterCode = starter.code;
       const starterFile: FileItem = {
         id: starterFileId,
         name: starterName,
@@ -750,7 +826,7 @@ export function App() {
         redoStack: [],
       };
 
-      const langLabel = language === 'luau' ? 'Luau' : language === 'lua' ? 'Lua' : 'Other';
+      const langLabel = language === 'other' ? 'Other' : language_label(language);
       const newProj: Project = {
         id: `proj-${now}`,
         name,
@@ -1235,6 +1311,12 @@ export function App() {
                   onCreateFolder={handleCreateFolder}
                   onRenameNode={handleRenameNode}
                   onDeleteNode={handleDeleteNode}
+                  clipboard={clipboard_info}
+                  onCopyNode={handleCopyNode}
+                  onCutNode={handleCutNode}
+                  onPasteNode={handlePasteNode}
+                  onDuplicateNode={handleDuplicateNode}
+                  onClearClipboard={() => set_node_clipboard(null)}
                   onToggleFolder={handleToggleFolder}
                   onSaveAll={handleSaveAllFiles}
                   onClosePanel={() => setActivePanel(null)}

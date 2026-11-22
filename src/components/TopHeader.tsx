@@ -1,6 +1,7 @@
 import React from 'react';
 import { Undo2, Redo2, FolderKanban, Puzzle, GitBranch } from 'lucide-react';
 import { FileItem, LanguageMode, NavPanel } from '../types/ide';
+import { LANGUAGE_OPTIONS, mode_for_name } from '../utils/languages';
 
 interface TopHeaderProps {
   activeFile: FileItem | null;
@@ -48,7 +49,9 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
   const extension = hasFile && lastDotIdx > 0 ? fullName.slice(lastDotIdx) : '';
 
   const isDirty = activeFile ? activeFile.content !== activeFile.savedContent : false;
-  const currentLang: LanguageMode = activeFile?.language || 'Unknown';
+  const currentLang: LanguageMode = activeFile?.language || 'other';
+  const effective_lang: LanguageMode =
+    currentLang === 'other' && activeFile ? mode_for_name(activeFile.name) ?? 'other' : currentLang;
 
   return (
     <header className="h-11 min-h-[44px] w-full bg-[#222223] px-3 flex items-center justify-between gap-2 select-none z-20">
@@ -76,45 +79,19 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           )}
         </div>
 
-        {/* Language Mode Selector (Lua / Luau) */}
-        <div
-          className="hidden sm:flex items-center bg-[#161617] border border-[#2F2F30] rounded p-0.5 shrink-0"
-          title="Switch syntax mode between Lua 5.4 and Luau"
+        {/* Language selector */}
+        <select
+          value={effective_lang}
+          onChange={(e) => onLanguageChange(e.target.value as LanguageMode)}
+          title="Switch the language of the open file"
+          className="hidden sm:block bg-[#161617] border border-[#2F2F30] rounded px-1.5 py-1 text-[11px] font-mono-code text-[#B4B4B8] outline-none shrink-0"
         >
-          <button
-            type="button"
-            onClick={() => onLanguageChange('lua')}
-            className={`px-2 py-0.5 text-[11px] font-mono-code rounded-xs transition-colors duration-120 ${
-              currentLang === 'lua'
-                ? 'bg-[#2E2E2F] text-[#E6E6E8] font-medium'
-                : 'text-[#707073] hover:text-[#A6A6AA]'
-            }`}
-          >
-            Lua
-          </button>
-          <button
-            type="button"
-            onClick={() => onLanguageChange('luau')}
-            className={`px-2 py-0.5 text-[11px] font-mono-code rounded-xs transition-colors duration-120 ${
-              currentLang === 'luau'
-                ? 'bg-[#2E2E2F] text-[#E6E6E8] font-medium'
-                : 'text-[#707073] hover:text-[#A6A6AA]'
-            }`}
-          >
-            Luau
-          </button>
-          <button
-            type="button"
-            onClick={() => onLanguageChange('other')}
-            className={`px-2 py-0.5 text-[11px] font-mono-code rounded-xs transition-colors duration-120 ${
-              currentLang === 'other'
-                ? 'bg-[#2E2E2F] text-[#E6E6E8] font-medium'
-                : 'text-[#707073] hover:text-[#A6A6AA]'
-            }`}
-          >
-            Other
-          </button>
-        </div>
+          {LANGUAGE_OPTIONS.map((o) => (
+            <option key={o.mode} value={o.mode}>
+              {o.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* CENTER: Main Navigation Buttons (Projects | Plugins | Git) */}

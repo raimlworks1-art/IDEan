@@ -21,13 +21,16 @@ import {
 } from 'lucide-react';
 import { FileItem, LanguageMode, SyntaxDiagnostic, Token } from '../types/ide';
 import {
+  LANGUAGE_OPTIONS,
   LineToken,
   comment_marker_for,
   detect_lang_id,
   is_lua_family,
   lang_label,
+  mode_for_name,
   tokenize_window,
 } from '../utils/languages';
+import { apply_suggestion, suggest_at } from '../utils/suggest';
 import {
   tokenizeLua,
   getTokenColorClass,
@@ -354,6 +357,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const lang_id = useMemo(() => detect_lang_id(activeFile.name, language), [activeFile.name, language]);
   const lua_family = is_lua_family(lang_id);
   const commentMarker = comment_marker_for(lang_id);
+  const [ta_focused, set_ta_focused] = useState(false);
+  const [lang_menu_open, set_lang_menu_open] = useState(false);
   const [win, set_win] = useState({ start: 0, end: WINDOW_OVERSCAN * 2 });
   const win_ref = useRef(win);
   win_ref.current = win;
@@ -451,6 +456,11 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     if (cursorState.selStart !== cursorState.selEnd) return null;
     return findMatchingBracket(code, cursorState.selStart);
   }, [code, cursorState.selStart, cursorState.selEnd, plain_big]);
+
+  const suggest_target = useMemo(() => {
+    if (!ta_focused || plain_big || cursorState.selStart !== cursorState.selEnd) return null;
+    return suggest_at(code, cursorState.selStart, lang_id);
+  }, [ta_focused, plain_big, code, cursorState.selStart, cursorState.selEnd, lang_id]);
 
   const bracket_map = useMemo(() => {
     if (!matchedBrackets) return null;
@@ -1046,6 +1056,12 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     schedule_window_update();
   }, [lines.length, plain_big, schedule_window_update]);
 
+  const accept_suggestion = (text: string) => {
+    if (!suggest_target) return;
+    const res = apply_suggestion(code, cursorState.selStart, suggest_target, text);
+    applyEditResult({ newText: res.newText, selectionStart: res.caret, selectionEnd: res.caret });
+  };
+
   fold_actions_ref.current = { fold: handleFoldBlock, unfold: handleUnfoldBlock };
   const on_fold = useCallback(
     (start: number, end: number, label: string) => fold_actions_ref.current?.fold(start, end, label),
@@ -1395,6 +1411,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
             }}
             onKeyDown={handleKeyDown}
             onKeyUp={() => syncCursorFromTextarea(true)}
+            onFocus={() => set_ta_focused(true)}
+            onBlur={() => set_ta_focused(false)}
             onClick={() => syncCursorFromTextarea(false)}
             onSelect={() => syncCursorFromTextarea(false)}
             spellCheck={false}
@@ -1416,6 +1434,34 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           />
         </div>
       </div>
+
+      {suggest_target && (
+        <div
+          className="h-8 min-h-[32px] shrink-0 bg-[#1F1F20] border-t border-[#2F2F30] px-2 flex items-center gap-1.5 overflow-x-auto overflow-y-hidden z-20"
+          role="listbox"
+          aria-label="Suggestions"
+        >
+          {suggest_target.items.some((i) => i.kind === 'fix') && (
+            <span className="text-[10px] uppercase tracking-wide text-[#C9C9CC] shrink-0">Fix</span>
+          )}
+          {suggest_target.items.map((item) => (
+            <button
+              key={`${item.kind}-${item.text}`}
+              type="button"
+              onPointerDown={(e) => e.preventDefault()}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => accept_suggestion(item.text)}
+              className={`px-2.5 h-6 shrink-0 rounded text-[12px] font-mono-code border ${
+                item.kind === 'fix'
+                  ? 'bg-[#2E2E2F] text-[#E6E6E8] border-[#707073]'
+                  : 'bg-[#161617] text-[#B4B4B8] border-[#2F2F30] hover:text-[#E6E6E8]'
+              }`}
+            >
+              {item.text}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 4. Ultra-Slim Minimalist Status Bar */}
       <footer className="h-6 min-h-[24px] bg-[#161617] border-t border-[#2F2F30] px-3 flex items-center justify-between text-[11px] font-mono-code text-[#707073] select-none shrink-0 z-20">
@@ -1459,22 +1505,46 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           <span className="hidden sm:inline">UTF-8</span>
           <button
             type="button"
-            onClick={() => {
-              if (lua_family || lang_id === 'plain') {
-                onLanguageChange(language === 'luau' ? 'lua' : language === 'lua' ? 'other' : 'luau');
-              }
-            }}
-            title={
-              lua_family || lang_id === 'plain'
-                ? 'Click to cycle language: Luau → Lua → Other (plain text)'
-                : 'Language is detected from the file extension'
-            }
+            onClick={() => set_lang_menu_open((v) => !v)}
+            title="Choose language"
             className="text-[#B4B4B8] hover:text-[#E6E6E8] font-medium"
           >
-            {lang_label(lang_id)}
+            {lang_label(lang_id)} ▾
           </button>
         </div>
       </footer>
+
+      {lang_menu_open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => set_lang_menu_open(false)} />
+          <div
+            role="menu"
+            className="absolute right-2 bottom-7 z-40 w-44 max-h-[70%] overflow-y-auto bg-[#222223] border border-[#3E3E40] rounded shadow-2xl py-1 text-[12px] text-[#E6E6E8] select-none"
+          >
+            {LANGUAGE_OPTIONS.map((option) => {
+              const active_mode = language !== 'other' ? language : mode_for_name(activeFile.name) ?? 'other';
+              return (
+                <button
+                  key={option.mode}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onLanguageChange(option.mode);
+                    set_lang_menu_open(false);
+                  }}
+                  className="w-full px-3 py-1.5 flex items-center justify-between hover:bg-[#2E2E2F]"
+                >
+                  <span>{option.label}</span>
+                  <span className="flex items-center gap-2">
+                    {option.ext && <span className="text-[10px] font-mono-code text-[#707073]">.{option.ext}</span>}
+                    {option.mode === active_mode && <span className="text-[#84A98C]">●</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {/* 5. Custom Context Menu on Right-Click */}
       {contextMenu && (
